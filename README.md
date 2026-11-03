@@ -55,8 +55,8 @@ Ringkasnya 39 verb:
 
 ```
 info sys ping sh pow x cd ls shot dl up clip keys ps kill taskkill
-msg notify tts volume mic block rick wifi grab power admin bsod
-persist unpersist update sleep exit purge
+msg notify tts volume mic block rick blackscreen wifi grab power admin bsod
+persist unpersist update sleep exit purge uninstall
 ```
 
 ## Peta ke `truelockmc/Discord-RAT`
@@ -74,13 +74,19 @@ padanan yang benar-benar jalan dan alasannya ditulis, bukan disembunyikan.
 | text-to-speech | `tts` | SAPI lewat PowerShell |
 | kontrol volume | `volume` | tombol sistem, karena tidak ada API absolut tanpa COM |
 | **mic livestream ke voice channel** | `mic [detik]` | Discord tidak lagi mengizinkan bot kirim audio ke voice tanpa voice lib; diganti rekam → WAV → attachment |
-| **channel purge** | `purge` | di repo acuan menghapus pesan channel; di sini menghapus jejak payload lalu keluar |
+| **channel purge** | `purge [n]` | sama seperti repo acuan: hapus pesan channel; hapus diri dipindah ke `uninstall` |
 | **BSOD** | `bsod yes` | bugcheck sungguhan, dijaga argumen `yes` |
 | **rickroll** | `rick [url]` | form borderless topmost; backend IE, jadi `.mp4` langsung yang jalan |
-| token Discord | `grab` | scan memori proses + leveldb, diverifikasi ke API, tanpa admin |
+| **blackscreen** | `blackscreen [off]` | form hitam topmost, kursor hilang, `Alt+F4` diblokir |
+| token Discord | `grab` | scan memori proses + leveldb, lalu email, billing, kontak, relasi |
 | screenshot semua monitor | `shot` | Pillow `ImageGrab(all_screens=True)` |
 | persistensi | `persist` / `unpersist` | registry Run + salinan di `%LOCALAPPDATA%` |
 | update jarak jauh | `update`, `update gh` | unduh, verifikasi sha256, timpa, relaunch |
+
+Nama perintah dari repo itu juga jalan apa adanya — `!screenshot`, `!cmd`,
+`!file_download`, `!restart`, `!keylog on`, `!input block`, `!rickroll`,
+`!grab_discord`, `!stop` — semuanya dipetakan di `_canon()`. Daftar lengkapnya di
+[`docs/commands.md`](docs/commands.md).
 
 ## Kemampuan bertanda hak akses
 

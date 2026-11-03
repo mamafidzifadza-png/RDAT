@@ -109,3 +109,36 @@ class Discord:
             for chunk in r.iter_content(65536):
                 fh.write(chunk)
         return dest
+
+    def purge(self, limit=100):
+        """Hapus pesan di channel, mundur dari yang terbaru.
+
+        Pesan bot sendiri selalu bisa dihapus. Pesan user hanya terhapus kalau
+        bot punya izin Manage Messages; yang ditolak dihitung sebagai `skip`,
+        bukan dianggap sukses — jadi laporannya jujur.
+        """
+        gone = skip = 0
+        before = None
+        checked = 0
+        while checked < limit:
+            path = "/channels/%s/messages?limit=50" % self.channel
+            if before:
+                path += "&before=%s" % before
+            r = self.call("GET", path)
+            if r is None or not r.ok:
+                break
+            batch = r.json()
+            if not batch:
+                break
+            for msg in batch:
+                before = msg["id"]
+                checked += 1
+                d = self.call("DELETE", "/channels/%s/messages/%s" % (self.channel, msg["id"]))
+                if d is not None and d.ok:
+                    gone += 1
+                else:
+                    skip += 1
+                time.sleep(0.35)
+                if checked >= limit:
+                    break
+        return gone, skip
