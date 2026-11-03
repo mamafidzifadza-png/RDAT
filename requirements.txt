@@ -1,0 +1,13 @@
+# Runtime payload
+requests>=2.31
+pillow>=10.0
+
+# Build toolchain. Nuitka + MSVC menggantikan PyInstaller: nggak ada
+# bootloader, nggak ada arsip PYZ, nggak ada folder _MEI yang diekstrak
+# ke %TEMP% tiap jalan.
+nuitka>=4.3
+zstandard>=0.22
+ordered-set>=4.1
+
+# Opsional: cuma kalau mau build engine lama.
+# pyinstaller>=6.0
