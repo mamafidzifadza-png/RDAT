@@ -88,8 +88,8 @@ def run():
     shell = caps.Shell()
     router = cmd.Dispatcher(bot, shell, kl, config.NAME, state)
 
-    bot.send("online | %s | %s\npersist: %s"
-             % (caps.sysinfo().splitlines()[0], bot.alias, pstat))
+    bot.send("online | %s | id %s | %s\npersist: %s"
+             % (caps.sysinfo().splitlines()[0], bot.uuid[:8], bot.alias, pstat))
 
     if config.PERSIST:
         threading.Thread(target=_deferred_persist, args=(bot,),

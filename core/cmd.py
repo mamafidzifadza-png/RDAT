@@ -48,7 +48,14 @@ def _canon(verb, arg):
     return target, ((pre + " " + arg).strip() if pre else arg)
 
 
-HELP = """verb yang ada:
+HELP = """cara alamatkan perintah:
+!a <verb>            alias mesin ini
+!<uuid8> <verb>      satu mesin tertentu (lihat `who`)
+!@<pola> <verb>      pilih berdasarkan host / user / uuid8, mis. !@hojv shot
+!* <verb>            semua mesin yang hidup
+
+verb yang ada:
+who                  kartu identitas: uuid8, host, build, sha, uptime
 info                 ringkasan mesin
 ping                 latensi ke API Discord
 sys                  info lengkap (alias info)
@@ -109,15 +116,39 @@ class Dispatcher:
 
         if content.startswith("!"):
             head, _, body = content[1:].partition(" ")
-            head = head.strip().lower()
-            # Tiga bentuk: !a (alias), !<uuid penuh>, !* (semua).
-            if head in ("*", "all", self.bot.uuid.lower(), self.bot.alias.lower()):
+            # `!a` polos (tanpa verb) diabaikan, bukan dijawab "verb tidak dikenal".
+            if body.strip() and self._for_me(head.strip().lower()):
                 self._dispatch(body.strip(), attachments)
             return
 
         # Attachment tanpa perintah = file yang nyangkut, abaikan.
         if attachments:
             self.bot.send("lampiran tanpa perintah, pakai: !%s up <path>" % self.bot.alias)
+
+    def _for_me(self, head):
+        """Pesan ini untuk mesin ini atau bukan.
+
+        Bentuk yang diterima:
+
+            !*              semua mesin
+            !a              alias mesin ini
+            !6908c58a       uuid8, atau uuid penuh
+            !@hojv          host / user / uuid8 / alias mengandung "hojv"
+
+        `!@` ada karena alias bisa kembar: dua build yang dibakar dengan
+        --alias a sama-sama menjawab `!a`, dan dulu nggak ada cara memilih
+        salah satu. Sekarang pilih lewat nama host, yang selalu beda.
+        """
+        bot = self.bot
+        if head in ("*", "all"):
+            return True
+        if head.startswith("@"):
+            pat = head[1:].strip()
+            if not pat:
+                return True
+            return any(pat in part for part in
+                       (bot.host, bot.user, bot.uuid8, bot.alias))
+        return head in (bot.uuid.lower(), bot.uuid8, bot.alias)
 
     def _dispatch(self, body, attachments):
         verb, _, arg = body.partition(" ")
@@ -126,8 +157,11 @@ class Dispatcher:
         verb, arg = _canon(verb, arg)
 
         if verb in ("help", "?"):
-            return self.bot.send("alias mesin ini: !%s   (!* = semua mesin)\n%s"
-                                 % (self.bot.alias, HELP))
+            return self.bot.send(
+                "mesin ini: !%s   uuid %s   (!* semua, !@pola pilih host)\n%s"
+                % (self.bot.alias, self.bot.uuid[:8], HELP))
+        if verb in ("who", "id", "device", "me"):
+            return self.bot.send(extra.who(self.bot, self.state))
         if verb == "info":
             return self.bot.send(caps.sysinfo())
         if verb == "sys":

