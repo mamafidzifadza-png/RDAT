@@ -51,7 +51,7 @@ menjalankan `leak_check` di akhir — token plaintext, nama modul, dan string
 ## Perintah
 
 Daftar lengkap dengan hak akses dan batasnya ada di [`docs/commands.md`](docs/commands.md).
-Ringkasnya 40 verb:
+Ringkasnya 37 verb:
 
 ```
 who info sys ping sh pow x cd ls shot dl up clip keys ps kill taskkill
