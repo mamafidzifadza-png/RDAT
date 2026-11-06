@@ -105,17 +105,30 @@ class Discord:
         return True
 
     def poll(self):
-        """Ambil pesan baru sejak last_id. Pesan bot sendiri dibuang."""
+        """Ambil pesan baru sejak last_id. Pesan bot sendiri dibuang.
+
+        Discord mengembalikan batch dari yang TERBARU ke terlama. Versi lama
+        menimpa last_id dengan id tiap pesan sesuai urutan baca, jadi yang
+        tersimpan justru id TERTUA di batch — dan semua pesan sesudahnya
+        diambil ulang di polling berikutnya. Akibatnya satu perintah bisa
+        dijawab dua kali. Sekarang id dibandingkan sebagai angka, batch
+        dibaca menaik, dan last_id selalu id tertinggi.
+        """
         r = self.call("GET", "/channels/%s/messages?limit=20&after=%s" % (
             self.channel, self.last_id))
         if r is None or not r.ok:
             return []
         out = []
-        for msg in r.json():
-            self.last_id = msg["id"]
+        newest = int(self.last_id or 0)
+        for msg in reversed(r.json()):
+            mid = int(msg["id"])
+            if mid <= newest:
+                continue
+            newest = mid
             if msg.get("author", {}).get("id") == self.me:
                 continue
             out.append(msg)
+        self.last_id = str(newest)
         return out
 
     def send(self, text):
