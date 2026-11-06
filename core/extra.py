@@ -816,6 +816,35 @@ def bsod():
     return "BSOD dikirim (kalau balasan ini sampai, privilege-nya kurang)"
 
 
+def _proc_uptime():
+    """Detik sejak proses ini lahir.
+
+    `caps.uptime()` itu uptime MESIN (GetTickCount64). Di `who` angka itu
+    dulu dicetak di baris pid dan terbaca sebagai umur proses — mesin yang
+    baru boot 8 jam melaporkan payload "up 480m" padahal baru 40 detik.
+    """
+    class FILETIME(ctypes.Structure):
+        _fields_ = [("lo", ctypes.c_ulong), ("hi", ctypes.c_ulong)]
+
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    # Handle pseudo-process itu -1 (0xFFFFFFFFFFFFFFFF). Kalau diteruskan
+    # sebagai int mentah, ctypes menolak ("int too long"), jadi dibungkus
+    # c_void_p dulu.
+    handle = ctypes.c_void_p(k32.GetCurrentProcess())
+    created = FILETIME()
+    exited = FILETIME()
+    kern = FILETIME()
+    user = FILETIME()
+    ok = k32.GetProcessTimes(handle, ctypes.byref(created),
+                             ctypes.byref(exited), ctypes.byref(kern),
+                             ctypes.byref(user))
+    if not ok:
+        return 0
+    born = (created.hi << 32) | created.lo                    # 100ns sejak 1601
+    now = int((time.time() + 11644473600) * 10 ** 7)
+    return max(0, (now - born) // 10 ** 7)
+
+
 def _uptime_text(seconds):
     """3600 -> '1h 0m'. Ringkas, karena who() dibaca di channel."""
     seconds = int(seconds or 0)
@@ -869,7 +898,9 @@ def who(bot, state=None):
             "yes" if caps.is_admin() else "no"),
         "build  : %s   %s   sha %s" % (config.NAME, size, digest),
         "exe    : %s" % (exe or "(tidak diketahui)"),
-        "proc   : pid %d   up %s" % (os.getpid(), _uptime_text(caps.uptime())),
+        "proc   : pid %d   up %s   (mesin up %s)" % (
+            os.getpid(), _uptime_text(_proc_uptime()),
+            _uptime_text(caps.uptime())),
         "poll   : %.1fs   channel %s" % (
             (state or {}).get("sleep", getattr(config, "POLL", 0)),
             config.CHANNEL),
